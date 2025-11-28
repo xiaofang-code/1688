@@ -8,6 +8,9 @@ import time
 import requests
 import hashlib
 import base64
+from typing import Optional, Dict
+
+from lib.proxy import get_proxy
 
 
 def calculate_md5_hash(text: str):
@@ -15,8 +18,20 @@ def calculate_md5_hash(text: str):
 
 
 def request_post(
-    url, params=None, data=None, files=None, headers=None, timeout=10, cookies=None
+    url, params=None, data=None, files=None, headers=None, timeout=10, cookies=None, use_proxy=True
 ):
+    """
+    POST 请求，支持代理
+    
+    Args:
+        use_proxy: 是否使用代理，默认 True
+    """
+    proxies = None
+    if use_proxy:
+        proxy_info = get_proxy()
+        if proxy_info:
+            proxies = proxy_info.requests_proxies
+    
     with contextlib.closing(
         requests.post(
             url=url,
@@ -26,15 +41,33 @@ def request_post(
             headers=headers,
             cookies=cookies,
             timeout=timeout,
+            proxies=proxies,
         )
     ) as req:
         return req
 
 
-def request_get(url, params=None, headers=None, timeout=10, cookies=None):
+def request_get(url, params=None, headers=None, timeout=10, cookies=None, use_proxy=True):
+    """
+    GET 请求，支持代理
+    
+    Args:
+        use_proxy: 是否使用代理，默认 True
+    """
+    proxies = None
+    if use_proxy:
+        proxy_info = get_proxy()
+        if proxy_info:
+            proxies = proxy_info.requests_proxies
+    
     with contextlib.closing(
         requests.get(
-            url=url, params=params, headers=headers, cookies=cookies, timeout=timeout
+            url=url, 
+            params=params, 
+            headers=headers, 
+            cookies=cookies, 
+            timeout=timeout,
+            proxies=proxies,
         )
     ) as req:
         return req
