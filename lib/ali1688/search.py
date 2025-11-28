@@ -12,7 +12,7 @@ from typing import List, Dict, Optional
 from playwright.async_api import async_playwright
 from playwright.sync_api import sync_playwright
 
-from lib.proxy import get_proxy, get_new_proxy, ProxyInfo
+from lib.proxy import get_proxy, get_new_proxy, get_proxies, ProxyInfo
 
 
 def get_search_url(image_id: str) -> str:
@@ -26,7 +26,8 @@ async def fetch_product_links_async(
     headless: bool = True, 
     timeout: int = 60000,
     use_proxy: bool = True,
-    retry_count: int = 2
+    retry_count: int = 2,
+    proxy_info: Optional[ProxyInfo] = None  # 可指定代理
 ) -> List[Dict]:
     """
     异步版本：使用 Playwright 获取产品链接（用于 FastAPI）
@@ -38,6 +39,7 @@ async def fetch_product_links_async(
         timeout: 等待超时时间（毫秒），默认 60000
         use_proxy: 是否使用代理，默认 True
         retry_count: 失败重试次数，默认 2
+        proxy_info: 指定的代理（用于批量处理时每个图片用不同 IP）
         
     Returns:
         产品列表 [{"title": "...", "url": "...", "offer_id": "..."}, ...]
@@ -46,13 +48,13 @@ async def fetch_product_links_async(
     products = []
     
     for attempt in range(retry_count + 1):
-        # 获取代理
+        # 获取代理：优先使用指定的代理
         proxy_config = None
         if use_proxy:
-            proxy_info = get_new_proxy() if attempt > 0 else get_proxy()
-            if proxy_info:
-                proxy_config = proxy_info.playwright_proxy
-                print(f"🌐 使用代理: {proxy_info.server}")
+            current_proxy = proxy_info if (proxy_info and attempt == 0) else (get_new_proxy() if attempt > 0 else get_proxy())
+            if current_proxy:
+                proxy_config = current_proxy.playwright_proxy
+                print(f"🌐 使用代理: {current_proxy.server}")
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(

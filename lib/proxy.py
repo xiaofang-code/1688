@@ -9,7 +9,7 @@ API 文档：https://share.proxy.qg.net
 """
 
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from dataclasses import dataclass
 from urllib.parse import quote
 import requests
@@ -130,6 +130,72 @@ class ProxyPool:
             print(f"获取代理异常: {e}")
             return None
     
+    def get_proxies(self, num: int) -> List[ProxyInfo]:
+        """
+        批量获取代理 IP（每个图片使用不同的 IP，避免重复超时）
+        
+        Args:
+            num: 需要的代理数量
+            
+        Returns:
+            代理 IP 列表
+        """
+        if not self.enabled:
+            return []
+        
+        if num <= 0:
+            return []
+        
+        # 限制请求频率
+        elapsed = time.time() - self._last_fetch_time
+        if elapsed < self._min_fetch_interval:
+            time.sleep(self._min_fetch_interval - elapsed)
+        
+        try:
+            params = {
+                "key": self.api_key,
+                "num": min(num, 50),  # 单次最多获取 50 个
+                "format": "json",
+                "distinct": "true"  # IP 去重
+            }
+            
+            response = requests.get(self.base_url, params=params, timeout=10)
+            self._last_fetch_time = time.time()
+            
+            data = response.json()
+            
+            if data.get("code") != "SUCCESS":
+                print(f"批量获取代理失败: {data.get('code')} - {data}")
+                return []
+            
+            ip_data = data.get("data", [])
+            if not ip_data:
+                print("批量获取代理失败: 无可用 IP")
+                return []
+            
+            proxies = []
+            for ip_info in ip_data:
+                proxy = ProxyInfo(
+                    proxy_ip=ip_info.get("proxy_ip", ""),
+                    server=ip_info.get("server", ""),
+                    area=ip_info.get("area", ""),
+                    isp=ip_info.get("isp", ""),
+                    deadline=ip_info.get("deadline", ""),
+                    username=PROXY_USERNAME,
+                    password=PROXY_PASSWORD
+                )
+                proxies.append(proxy)
+            
+            print(f"✅ 批量获取 {len(proxies)} 个代理 IP")
+            for i, p in enumerate(proxies):
+                print(f"   [{i+1}] {p.server} ({p.area})")
+            
+            return proxies
+            
+        except Exception as e:
+            print(f"批量获取代理异常: {e}")
+            return []
+    
     def clear_proxy(self):
         """清除当前代理（用于代理失效时）"""
         self._current_proxy = None
@@ -159,6 +225,11 @@ def get_proxy() -> Optional[ProxyInfo]:
 def get_new_proxy() -> Optional[ProxyInfo]:
     """便捷函数：获取新的代理 IP"""
     return get_proxy_pool().get_proxy(force_new=True)
+
+
+def get_proxies(num: int) -> List[ProxyInfo]:
+    """便捷函数：批量获取代理 IP（每个图片用不同的 IP）"""
+    return get_proxy_pool().get_proxies(num)
 
 
 def is_proxy_enabled() -> bool:
