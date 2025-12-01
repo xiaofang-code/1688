@@ -273,7 +273,7 @@ async def process_email_batch_task(task_id: str, image_urls: List[str], email: s
     start_time = datetime.now()
     
     results = []
-    semaphore = asyncio.Semaphore(3)  # 并发控制：同时处理 3 个
+    semaphore = asyncio.Semaphore(5)  # 并发控制：同时处理 5 个
     
     # 🚀 分批处理，每批获取新的代理（避免 2 分钟短效代理过期）
     BATCH_SIZE = 10  # 每批处理 10 张（约 30-60 秒，在代理有效期内）
