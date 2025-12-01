@@ -81,36 +81,72 @@ def upload_image_to_1688(image_path: str) -> dict:
 async def search_products(
     image_path: str, 
     limit: int = 5,
-    proxy_info: Optional[ProxyInfo] = None  # 可指定代理
+    proxy_info: Optional[ProxyInfo] = None,  # 可指定代理
+    max_retries: int = 3  # 最大重试次数
 ) -> SearchResponse:
-    """搜索产品"""
-    try:
-        data = upload_image_to_1688(image_path)
-        
-        if data.get("ret", [""])[0] != "SUCCESS::调用成功":
-            return SearchResponse(success=False, error=f"上传失败")
-        
-        image_id = data.get("data", {}).get("imageId", "")
-        if not image_id:
-            return SearchResponse(success=False, error="未获取到 imageId")
-        
-        search_url = get_search_url(image_id)
-        products_data = await fetch_product_links_async(
-            image_id, 
-            limit=limit, 
-            headless=True,
-            proxy_info=proxy_info  # 传递指定的代理
-        )
-        products = [Product(**p) for p in products_data]
-        
-        return SearchResponse(
-            success=True,
-            image_id=image_id,
-            search_url=search_url,
-            products=products
-        )
-    except Exception as e:
-        return SearchResponse(success=False, error=str(e))
+    """搜索产品（带重试机制）"""
+    import asyncio
+    
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            # 上传图片到 1688
+            data = upload_image_to_1688(image_path)
+            
+            # 检查上传结果
+            ret_msg = data.get("ret", [""])[0] if data.get("ret") else ""
+            if ret_msg != "SUCCESS::调用成功":
+                last_error = "上传失败"
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    print(f"⚠️ 上传失败，{wait_time}秒后重试... ({attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue
+                return SearchResponse(success=False, error=last_error)
+            
+            image_id = data.get("data", {}).get("imageId", "")
+            if not image_id:
+                return SearchResponse(success=False, error="未获取到 imageId")
+            
+            search_url = get_search_url(image_id)
+            products_data = await fetch_product_links_async(
+                image_id, 
+                limit=limit, 
+                headless=True,
+                proxy_info=proxy_info  # 传递指定的代理
+            )
+            products = [Product(**p) for p in products_data]
+            
+            return SearchResponse(
+                success=True,
+                image_id=image_id,
+                search_url=search_url,
+                products=products
+            )
+            
+        except (TimeoutError, ConnectionError) as e:
+            last_error = str(e)
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2
+                print(f"⚠️ 连接超时: {e}，{wait_time}秒后重试... ({attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                continue
+            return SearchResponse(success=False, error=f"连接超时: {last_error}")
+            
+        except Exception as e:
+            error_msg = str(e)
+            # 检查是否是可重试的错误
+            if any(keyword in error_msg for keyword in ["timeout", "timed out", "Connection aborted", "Connection reset"]):
+                last_error = error_msg
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 2
+                    print(f"⚠️ {error_msg[:50]}...，{wait_time}秒后重试... ({attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                    continue
+            return SearchResponse(success=False, error=error_msg)
+    
+    return SearchResponse(success=False, error=f"重试 {max_retries} 次后仍失败: {last_error}")
 
 
 # ============== Excel 生成 ==============
@@ -236,14 +272,11 @@ async def process_email_batch_task(task_id: str, image_urls: List[str], email: s
     task["status"] = "processing"
     start_time = datetime.now()
     
-    # 🚀 批量获取代理 IP（每个图片用不同的 IP，避免被封）
-    num_urls = len(image_urls)
-    print(f"[{task_id[:8]}] 批量获取 {num_urls} 个代理 IP...")
-    proxies = get_proxies(num_urls)
-    print(f"[{task_id[:8]}] 获取到 {len(proxies)} 个代理 IP")
-    
     results = []
     semaphore = asyncio.Semaphore(3)  # 并发控制：同时处理 3 个
+    
+    # 🚀 分批处理，每批获取新的代理（避免 2 分钟短效代理过期）
+    BATCH_SIZE = 10  # 每批处理 10 张（约 30-60 秒，在代理有效期内）
     
     async def process_single(url: str, index: int, proxy: Optional[ProxyInfo] = None):
         async with semaphore:
@@ -274,19 +307,33 @@ async def process_email_batch_task(task_id: str, image_urls: List[str], email: s
             
             # 更新进度
             task["completed"] += 1
-            if task["completed"] % 10 == 0:
-                print(f"[{task_id[:8]}] 进度: {task['completed']}/{task['total']}")
+            print(f"[{task_id[:8]}] 进度: {task['completed']}/{task['total']}")
             
             return result
     
-    # 并发处理所有图片，每个图片分配一个代理
-    tasks_list = []
-    for i, url in enumerate(image_urls):
-        # 循环使用代理（如果代理不够用）
-        proxy = proxies[i % len(proxies)] if proxies else None
-        tasks_list.append(process_single(url, i, proxy))
+    # 分批处理，每批获取新的代理
+    total_batches = (len(image_urls) + BATCH_SIZE - 1) // BATCH_SIZE
+    print(f"[{task_id[:8]}] 开始处理 {len(image_urls)} 张图片，分 {total_batches} 批")
     
-    results = await asyncio.gather(*tasks_list)
+    for batch_idx in range(total_batches):
+        batch_start = batch_idx * BATCH_SIZE
+        batch_end = min(batch_start + BATCH_SIZE, len(image_urls))
+        batch_urls = image_urls[batch_start:batch_end]
+        batch_size = len(batch_urls)
+        
+        # 🔄 每批获取新的代理（保证在 2 分钟有效期内）
+        print(f"[{task_id[:8]}] 批次 {batch_idx + 1}/{total_batches}: 获取 {batch_size} 个代理...")
+        proxies = get_proxies(batch_size)
+        print(f"[{task_id[:8]}] 获取到 {len(proxies)} 个代理 IP")
+        
+        # 并发处理这一批
+        batch_tasks = []
+        for i, url in enumerate(batch_urls):
+            proxy = proxies[i % len(proxies)] if proxies else None
+            batch_tasks.append(process_single(url, batch_start + i, proxy))
+        
+        batch_results = await asyncio.gather(*batch_tasks)
+        results.extend(batch_results)
     
     # 按原始顺序排序
     results.sort(key=lambda x: x.get("index", 0))

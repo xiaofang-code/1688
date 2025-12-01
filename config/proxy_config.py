@@ -16,6 +16,9 @@ PROXY_API_KEY = "V8CU9K64"
 PROXY_ENABLED = True
 
 # 代理认证（如果需要）
-PROXY_USERNAME = "xiaofangcode"
-PROXY_PASSWORD = "Frx379520."
+# 注意：青果代理只支持 IP 白名单认证，不支持用户名密码
+# 请在代理服务商后台添加你的服务器 IP 到白名单
+PROXY_USERNAME = ""
+PROXY_PASSWORD = ""
 
+    
