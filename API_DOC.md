@@ -167,7 +167,7 @@ GET /health
 
 ```bash
 # 批量搜索
-curl -X POST "http://your-server:8000/batch/email" \
+curl -X POST "http://your-server:8688/batch/email" \
   -H "Content-Type: application/json" \
   -d '{
     "image_urls": [
@@ -180,7 +180,7 @@ curl -X POST "http://your-server:8000/batch/email" \
   }'
 
 # 查询状态
-curl "http://your-server:8000/batch/status/9d67a1ac-f98e-4751-9995-3e9416e4179b"
+curl "http://your-server:8688/batch/status/9d67a1ac-f98e-4751-9995-3e9416e4179b"
 ```
 
 ### 2️⃣ Python
@@ -198,14 +198,14 @@ data = {
     "limit": 5
 }
 
-response = requests.post("http://your-server:8000/batch/email", json=data)
+response = requests.post("http://your-server:8688/batch/email", json=data)
 result = response.json()
 print(f"任务ID: {result['task_id']}")
 print(f"预计时间: {result['estimated_time']}")
 
 # 查询状态
 task_id = result['task_id']
-status = requests.get(f"http://your-server:8000/batch/status/{task_id}")
+status = requests.get(f"http://your-server:8688/batch/status/{task_id}")
 print(status.json())
 ```
 
@@ -243,7 +243,7 @@ function batchSearch() {
   };
   
   try {
-    var response = UrlFetchApp.fetch("http://your-server:8000/batch/email", options);
+    var response = UrlFetchApp.fetch("http://your-server:8688/batch/email", options);
     var result = JSON.parse(response.getContentText());
     
     SpreadsheetApp.getUi().alert(
@@ -271,7 +271,7 @@ function onOpen() {
 
 ```javascript
 async function batchSearch(imageUrls, email) {
-  const response = await fetch('http://your-server:8000/batch/email', {
+  const response = await fetch('http://your-server:8688/batch/email', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
@@ -343,7 +343,7 @@ batchSearch([
 docker build -t 1688-api .
 
 # 运行容器
-docker run -d -p 8000:8000 --name 1688-api 1688-api
+docker run -d -p 8688:8688 --name 1688-api 1688-api
 ```
 
 ### Docker Compose
@@ -362,7 +362,7 @@ uv sync
 uv run playwright install chromium
 
 # 启动服务
-uv run uvicorn api:app --host 0.0.0.0 --port 8000
+uv run uvicorn api:app --host 0.0.0.0 --port 8688
 ```
 
 ---
@@ -370,6 +370,6 @@ uv run uvicorn api:app --host 0.0.0.0 --port 8000
 ## 📞 API 交互文档
 
 启动服务后访问：
-- Swagger UI: `http://your-server:8000/docs`
-- ReDoc: `http://your-server:8000/redoc`
+- Swagger UI: `http://your-server:8688/docs`
+- ReDoc: `http://your-server:8688/redoc`
 

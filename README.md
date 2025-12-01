@@ -32,17 +32,17 @@ uv run python main.py
 ### 启动 API 服务
 
 ```bash
-uv run uvicorn api:app --host 0.0.0.0 --port 8000
+uv run uvicorn api:app --host 0.0.0.0 --port 8688
 ```
 
-API 文档：http://localhost:8000/docs
+API 文档：http://localhost:8688/docs
 
 ### API 接口
 
 #### 上传图片搜索
 
 ```bash
-curl -X POST "http://localhost:8000/search/upload" \
+curl -X POST "http://localhost:8688/search/upload" \
   -F "file=@your_image.jpg" \
   -F "limit=5"
 ```
@@ -50,7 +50,7 @@ curl -X POST "http://localhost:8000/search/upload" \
 #### 通过 URL 搜索
 
 ```bash
-curl "http://localhost:8000/search/url?image_url=https://example.com/image.jpg&limit=5"
+curl "http://localhost:8688/search/url?image_url=https://example.com/image.jpg&limit=5"
 ```
 
 #### 返回示例
@@ -99,7 +99,7 @@ docker build -t 1688-crawler .
 ### 运行容器
 
 ```bash
-docker run -d -p 8000:8000 --name 1688-crawler 1688-crawler
+docker run -d -p 8688:8688 --name 1688-crawler 1688-crawler
 ```
 
 ### 使用 docker-compose
