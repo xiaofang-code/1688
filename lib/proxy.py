@@ -9,12 +9,16 @@ API 文档：https://share.proxy.qg.net
 """
 
 import time
+import threading
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 from urllib.parse import quote
 import requests
 
 from config.proxy_config import PROXY_API_KEY, PROXY_ENABLED, PROXY_USERNAME, PROXY_PASSWORD
+
+# 全局代理获取锁：确保所有地方获取代理都是串行的
+_proxy_fetch_lock = threading.Lock()
 
 
 @dataclass
@@ -71,8 +75,11 @@ class ProxyPool:
         """
         获取代理 IP（带重试机制）
         
+        注意：青果代理 IP 有效期仅 2 分钟，从获取时开始计时
+        所以每次都获取新 IP，不使用缓存
+        
         Args:
-            force_new: 是否强制获取新 IP
+            force_new: 是否强制获取新 IP（已废弃，始终获取新 IP）
             max_retries: 最大重试次数
             
         Returns:
@@ -82,73 +89,71 @@ class ProxyPool:
         if not self.enabled:
             return None
         
-        # 如果有缓存的代理且未过期，直接返回
-        if not force_new and self._current_proxy:
-            return self._current_proxy
-        
-        for attempt in range(max_retries):
-            # 限制请求频率（1.5 秒间隔）
-            elapsed = time.time() - self._last_fetch_time
-            min_interval = 1.5
-            if elapsed < min_interval:
-                time.sleep(min_interval - elapsed)
-            
-            try:
-                params = {
-                    "key": self.api_key,
-                    "num": 1,
-                    "format": "json",
-                    "distinct": "true"
-                }
+        # 🔒 全局锁：确保所有代理获取都是串行的（无论从哪里调用）
+        with _proxy_fetch_lock:
+            for attempt in range(max_retries):
+                # 限制请求频率（1.5 秒间隔）
+                elapsed = time.time() - self._last_fetch_time
+                min_interval = 1.5
+                if elapsed < min_interval:
+                    time.sleep(min_interval - elapsed)
                 
-                response = requests.get(self.base_url, params=params, timeout=10)
-                self._last_fetch_time = time.time()
-                
-                data = response.json()
-                
-                if data.get("code") != "SUCCESS":
-                    error_code = data.get('code')
-                    # 如果是临时失败，等待后重试
-                    if error_code in ["FAILED_OPERATION", "NO_RESOURCE_FOUND"] and attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 2
-                        print(f"⚠️ 获取代理失败 ({error_code})，{wait_time}秒后重试... ({attempt + 1}/{max_retries})")
-                        time.sleep(wait_time)
-                        continue
-                    print(f"获取代理失败: {error_code} - {data}")
-                    return None
-                
-                ip_data = data.get("data", [])
-                if not ip_data:
+                try:
+                    params = {
+                        "key": self.api_key,
+                        "num": 1,
+                        "format": "json",
+                        "distinct": "true"
+                    }
+                    
+                    response = requests.get(self.base_url, params=params, timeout=10)
+                    self._last_fetch_time = time.time()
+                    
+                    data = response.json()
+                    
+                    if data.get("code") != "SUCCESS":
+                        error_code = data.get('code')
+                        # 如果是临时失败，等待后重试
+                        if error_code in ["FAILED_OPERATION", "NO_RESOURCE_FOUND"] and attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 2
+                            print(f"⚠️ 获取代理失败 ({error_code})，{wait_time}秒后重试... ({attempt + 1}/{max_retries})")
+                            time.sleep(wait_time)
+                            continue
+                        print(f"获取代理失败: {error_code} - {data}")
+                        return None
+                    
+                    ip_data = data.get("data", [])
+                    if not ip_data:
+                        if attempt < max_retries - 1:
+                            print(f"⚠️ 无可用 IP，2秒后重试... ({attempt + 1}/{max_retries})")
+                            time.sleep(2)
+                            continue
+                        print("获取代理失败: 无可用 IP")
+                        return None
+                    
+                    ip_info = ip_data[0]
+                    self._current_proxy = ProxyInfo(
+                        proxy_ip=ip_info.get("proxy_ip", ""),
+                        server=ip_info.get("server", ""),
+                        area=ip_info.get("area", ""),
+                        isp=ip_info.get("isp", ""),
+                        deadline=ip_info.get("deadline", ""),
+                        username=PROXY_USERNAME,
+                        password=PROXY_PASSWORD
+                    )
+                    
+                    print(f"✅ 获取代理 IP: {self._current_proxy.server} ({self._current_proxy.area})")
+                    return self._current_proxy
+                    
+                except Exception as e:
                     if attempt < max_retries - 1:
-                        print(f"⚠️ 无可用 IP，2秒后重试... ({attempt + 1}/{max_retries})")
+                        print(f"⚠️ 获取代理异常: {e}，2秒后重试... ({attempt + 1}/{max_retries})")
                         time.sleep(2)
                         continue
-                    print("获取代理失败: 无可用 IP")
+                    print(f"获取代理异常: {e}")
                     return None
-                
-                ip_info = ip_data[0]
-                self._current_proxy = ProxyInfo(
-                    proxy_ip=ip_info.get("proxy_ip", ""),
-                    server=ip_info.get("server", ""),
-                    area=ip_info.get("area", ""),
-                    isp=ip_info.get("isp", ""),
-                    deadline=ip_info.get("deadline", ""),
-                    username=PROXY_USERNAME,
-                    password=PROXY_PASSWORD
-                )
-                
-                print(f"✅ 获取代理 IP: {self._current_proxy.server} ({self._current_proxy.area})")
-                return self._current_proxy
-                
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    print(f"⚠️ 获取代理异常: {e}，2秒后重试... ({attempt + 1}/{max_retries})")
-                    time.sleep(2)
-                    continue
-                print(f"获取代理异常: {e}")
-                return None
-        
-        return None
+            
+            return None
     
     def get_proxies(self, num: int, max_retries: int = 3) -> List[ProxyInfo]:
         """

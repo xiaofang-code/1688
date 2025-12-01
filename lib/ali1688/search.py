@@ -12,7 +12,7 @@ from typing import List, Dict, Optional
 from playwright.async_api import async_playwright
 from playwright.sync_api import sync_playwright
 
-from lib.proxy import get_proxy, get_new_proxy, get_proxies, ProxyInfo
+from lib.proxy import get_new_proxy, ProxyInfo
 
 
 def get_search_url(image_id: str) -> str:
@@ -48,10 +48,11 @@ async def fetch_product_links_async(
     products = []
     
     for attempt in range(retry_count + 1):
-        # 获取代理：优先使用指定的代理
+        # 获取代理：首次用传入的代理，重试时获取新代理
         proxy_config = None
         if use_proxy:
-            current_proxy = proxy_info if (proxy_info and attempt == 0) else (get_new_proxy() if attempt > 0 else get_proxy())
+            # 首次尝试用传入的代理，重试时获取新代理（即用即取，2分钟有效期）
+            current_proxy = proxy_info if (proxy_info and attempt == 0) else get_new_proxy()
             if current_proxy:
                 proxy_config = current_proxy.playwright_proxy
                 print(f"🌐 使用代理: {current_proxy.server}")
@@ -127,13 +128,13 @@ def fetch_product_links(
     products = []
     
     for attempt in range(retry_count + 1):
-        # 获取代理
+        # 获取代理（即用即取，2分钟有效期）
         proxy_config = None
         if use_proxy:
-            proxy_info = get_new_proxy() if attempt > 0 else get_proxy()
-            if proxy_info:
-                proxy_config = proxy_info.playwright_proxy
-                print(f"🌐 使用代理: {proxy_info.server}")
+            current_proxy = get_new_proxy()
+            if current_proxy:
+                proxy_config = current_proxy.playwright_proxy
+                print(f"🌐 使用代理: {current_proxy.server}")
         
         with sync_playwright() as p:
             browser = p.chromium.launch(

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM docker.m.daocloud.io/library/python:3.11-slim
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
@@ -47,6 +47,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-cache
 
 # 复制项目文件
+COPY README.md .
 COPY lib/ lib/
 COPY config/ config/
 COPY api.py .
@@ -60,10 +61,6 @@ RUN uv run playwright install-deps chromium
 
 # 暴露端口
 EXPOSE 8688
-
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8688/health || exit 1
 
 # 启动 API 服务
 CMD ["uv", "run", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8688"]

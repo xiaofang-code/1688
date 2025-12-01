@@ -32,7 +32,7 @@ from openpyxl.styles import Font, Alignment
 
 from lib.ali1688 import ali1688
 from lib.ali1688.search import fetch_product_links_async, get_search_url
-from lib.proxy import get_proxies, ProxyInfo
+from lib.proxy import get_new_proxy, ProxyInfo
 from config.email_config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SENDER_NAME
 
 
@@ -273,13 +273,24 @@ async def process_email_batch_task(task_id: str, image_urls: List[str], email: s
     start_time = datetime.now()
     
     results = []
-    semaphore = asyncio.Semaphore(5)  # 并发控制：同时处理 5 个
+    results_lock = asyncio.Lock()
     
-    # 🚀 分批处理，每批获取新的代理（避免 2 分钟短效代理过期）
-    BATCH_SIZE = 10  # 每批处理 10 张（约 30-60 秒，在代理有效期内）
+    # 🚀 并行工作队列：3 个 worker 并行，每个 worker 内部串行（获取代理→使用→获取→使用）
+    WORKER_COUNT = 3
+    queue = asyncio.Queue()
     
-    async def process_single(url: str, index: int, proxy: Optional[ProxyInfo] = None):
-        async with semaphore:
+    # 填充任务队列
+    for i, url in enumerate(image_urls):
+        await queue.put((i, url))
+    
+    async def worker(worker_id: int):
+        """工作协程：从队列取任务，获取代理，执行搜索"""
+        while True:
+            try:
+                index, url = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            
             result = {"image_url": url, "index": index}
             try:
                 # 下载图片
@@ -291,7 +302,9 @@ async def process_email_batch_task(task_id: str, image_urls: List[str], email: s
                     tmp_path = tmp.name
                 
                 try:
-                    # 使用指定的代理 IP
+                    # 🔄 获取代理并立即使用（worker 内串行，不会空等）
+                    proxy = get_new_proxy()
+                    print(f"[Worker-{worker_id}] 🌐 使用代理: {proxy.server if proxy else 'None'}")
                     search_result = await search_products(tmp_path, limit=limit, proxy_info=proxy)
                 finally:
                     if os.path.exists(tmp_path):
@@ -305,35 +318,16 @@ async def process_email_batch_task(task_id: str, image_urls: List[str], email: s
             except Exception as e:
                 result.update({"success": False, "error": str(e), "products": []})
             
-            # 更新进度
-            task["completed"] += 1
-            print(f"[{task_id[:8]}] 进度: {task['completed']}/{task['total']}")
-            
-            return result
+            async with results_lock:
+                results.append(result)
+                task["completed"] += 1
+                print(f"[{task_id[:8]}] 进度: {task['completed']}/{task['total']}")
     
-    # 分批处理，每批获取新的代理
-    total_batches = (len(image_urls) + BATCH_SIZE - 1) // BATCH_SIZE
-    print(f"[{task_id[:8]}] 开始处理 {len(image_urls)} 张图片，分 {total_batches} 批")
+    print(f"[{task_id[:8]}] 开始处理 {len(image_urls)} 张图片（{WORKER_COUNT} 个 worker 并行）")
     
-    for batch_idx in range(total_batches):
-        batch_start = batch_idx * BATCH_SIZE
-        batch_end = min(batch_start + BATCH_SIZE, len(image_urls))
-        batch_urls = image_urls[batch_start:batch_end]
-        batch_size = len(batch_urls)
-        
-        # 🔄 每批获取新的代理（保证在 2 分钟有效期内）
-        print(f"[{task_id[:8]}] 批次 {batch_idx + 1}/{total_batches}: 获取 {batch_size} 个代理...")
-        proxies = get_proxies(batch_size)
-        print(f"[{task_id[:8]}] 获取到 {len(proxies)} 个代理 IP")
-        
-        # 并发处理这一批
-        batch_tasks = []
-        for i, url in enumerate(batch_urls):
-            proxy = proxies[i % len(proxies)] if proxies else None
-            batch_tasks.append(process_single(url, batch_start + i, proxy))
-        
-        batch_results = await asyncio.gather(*batch_tasks)
-        results.extend(batch_results)
+    # 启动 worker 并等待完成
+    workers = [worker(i) for i in range(WORKER_COUNT)]
+    await asyncio.gather(*workers)
     
     # 按原始顺序排序
     results.sort(key=lambda x: x.get("index", 0))
